@@ -5,6 +5,7 @@ import uuid
 import os
 import requests
 
+import boto3
 from sanic import Sanic
 from sanic.log import logger
 from sanic import response
@@ -13,6 +14,16 @@ from sanic_ext import Extend
 production = 'DEV8dac6d02a913' not in os.environ
 basedir = os.environ.get('REPROSCHEMA_BACKEND_BASEDIR', os.getcwd() + '/reproschema_backend')
 basedir = basedir if production else os.getcwd()
+
+# Initialize S3 client
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    region_name=os.environ.get('AWS_REGION', 'us-east-1')
+)
+
+S3_BUCKET = os.environ.get('S3_BUCKET_NAME', '<your s3 bucket name here>')
 
 LOG_SETTINGS = dict(
     version=1,
@@ -173,12 +184,22 @@ async def submit(request):
         filename = os.path.join(upload_dir, nowstr + '-' + data_file.name)
         with open(filename, "wb") as fp:
             fp.write(data_file.body)
+            
+        # Save to S3 bucket
+        s3_key = f"{nowstr}-{data_file.name}"
+        s3_client.upload_file(filename, S3_BUCKET, s3_key)
+        logger.info(f"Uploaded {filename} to S3 as {s3_key}")
     if "responses" in request.form:
         os.makedirs(upload_dir, mode=0o770, exist_ok=True)
         responses = json.loads(request.form['responses'][0])
         filename = os.path.join(upload_dir, nowstr + "-messages.json")
         with open(filename, "wt") as fp:
             json.dump(responses, fp, indent=2, sort_keys=False)
+
+        # Save to S3 bucket
+        s3_key = f"{nowstr}-messages.json"
+        s3_client.upload_file(filename, S3_BUCKET, s3_key)
+        logger.info(f"Uploaded {filename} to S3 as {s3_key}")
     await flush_tokens(pending_tokens)
     return response.json({"status": "accepted"})
 
